@@ -19,43 +19,58 @@ expressWebSocket(app, null, {
   perMessageDeflate: false
 })
 
+const multicores = {}
+
 app.ws('/archiver/:key', (ws, req) => {
-  console.log('Websocket initiated for', req.params.key)
-  const multicore = new Multicore(ram, {key: req.params.key})
+  const archiverKey = req.params.key
+  console.log('Websocket initiated for', archiverKey)
+  let multicore
+  if (multicores[archiverKey]) {
+    multicore = multicores[archiverKey]
+  } else {
+    multicore = new Multicore(ram, {key: req.params.key})
+    multicores[archiverKey] = multicore
+    const ar = multicore.archiver
+    ar.on('add', feed => {
+      console.log('archive add', feed.key.toString('hex'), feed.length)
+      multicore.replicateFeed(feed)
+    })
+    ar.on('sync', feed => {
+      console.log('archive sync', feed.key.toString('hex'), feed.length)
+    })
+    ar.on('ready', () => {
+      console.log('archive ready', ar.changes.length)
+      ar.changes.on('append', () => {
+        console.log('archive changes append', ar.changes.length)
+      })
+      ar.changes.on('sync', () => {
+        console.log('archive changes sync', ar.changes.length)
+      })
+    })
+  }
   const ar = multicore.archiver
-  ar.on('add', feed => {
-    console.log('archive add', feed.key.toString('hex'))
-    multicore.replicateFeed(feed)
+  ar.ready(() => {
+    const stream = websocketStream(ws)
+    pump(
+      stream,
+      through2(function (chunk, enc, cb) {
+        console.log('From web', chunk)
+        this.push(chunk)
+        cb()
+      }),
+      ar.replicate({encrypt: false}),
+      through2(function (chunk, enc, cb) {
+        console.log('To web', chunk)
+        this.push(chunk)
+        cb()
+      }),
+      stream,
+      err => {
+        console.log('pipe finished', err && err.message)
+      }
+    )
+    multicore.replicateFeed(ar.changes)
   })
-  ar.on('sync', () => {
-    console.log('archive sync')
-  })
-  ar.on('ready', () => {
-    console.log('archive ready', ar.changes.length)
-    ar.changes.on('append', () => {
-      console.log('archive changes append', ar.changes.length)
-    })
-    ar.changes.on('sync', () => {
-      console.log('archive changes sync', ar.changes.length)
-    })
-  })
-  const stream = websocketStream(ws)
-  pump(
-    stream,
-    through2(function (chunk, enc, cb) {
-      console.log('From web', chunk)
-      this.push(chunk)
-      cb()
-    }),
-    ar.replicate({encrypt: false}),
-    through2(function (chunk, enc, cb) {
-      console.log('To web', chunk)
-      this.push(chunk)
-      cb()
-    }),
-    stream
-  )
-  multicore.replicateFeed(ar.changes)
 
   // Join swarm
   const sw = multicore.joinSwarm()

@@ -71,7 +71,7 @@ Archiver.prototype.replicate = function (opts) {
 
   const protocolOpts = {
     live: true,
-    id: this.changes.id,
+    // id: this.changes.id,
     encrypt: opts.encrypt,
     extensions: ['announceActor']
   }
@@ -128,8 +128,12 @@ Archiver.prototype.replicate = function (opts) {
       function onfeed () {
         console.log('Jim onfeed', prettyHash(feed.key),
                     'dk:', prettyHash(feed.discoveryKey))
+        console.log('Jim feed length', feed.length)
         if (stream.destroyed) return
 
+        stream.on('error', err => {
+          console.error('Jim onfeed error', err)
+        })
         stream.on('close', onclose)
         stream.on('end', onclose)
 
@@ -141,6 +145,7 @@ Archiver.prototype.replicate = function (opts) {
         console.log('Jim feed peers', feed.peers.length)
 
         function onclose () {
+          console.log('Jim onfeed onclose')
           feed.removeListener('_archive', onarchive)
         }
 

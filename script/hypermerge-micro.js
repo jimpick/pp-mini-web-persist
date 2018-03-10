@@ -36,6 +36,7 @@ function Hypermerge (storage, opts) {
 
   opts = opts || {}
   this.key = opts.key ? toBuffer(opts.key, 'hex') : null
+  console.log('Jim Frontend Key', this.key && this.key.toString('hex'))
   this.localKey = opts.localKey ? toBuffer(opts.localKey, 'hex') : null
 
   if (!storage) storage = ram
@@ -83,6 +84,7 @@ Hypermerge.prototype._open = function (cb) {
     self.lastSeen = {}
 
     if (source.writable) {
+      console.log('Jim source is writable')
       self.doc = new WatchableDoc(Automerge.init(self.key.toString('hex')))
       self.doc.registerHandler(self._newChanges.bind(self))
       self.previousDoc = self.doc.get()
@@ -92,6 +94,7 @@ Hypermerge.prototype._open = function (cb) {
       })
     }
 
+    console.log('Jim source is not writable, creating local key')
     self.source.on('sync', self._syncToAutomerge.bind(self, self.source))
 
     var local = self._createFeed(self.localKey)
@@ -117,6 +120,27 @@ Hypermerge.prototype._open = function (cb) {
   })
 }
 
+Hypermerge.prototype.getMissing = function (cb) {
+  cb = cb || noop
+  const self = this
+
+  if (self.source.writable) {
+    self._syncToAutomerge(self.source, () => {
+      findMissingPeers(cb)
+    })
+  } else {
+    self._syncToAutomerge(self.source, () => {
+      self._syncToAutomerge(self.local, () => {
+        findMissingPeers(cb)
+      })
+    })
+  }
+
+  function findMissingPeers (cb) {
+    self._findMissingPeers(cb)
+  }
+}
+
 Hypermerge.prototype._findMissingPeers = function (cb) {
   const self = this
   const missingDeps = Automerge.getMissingDeps(self.doc.get())
@@ -136,7 +160,9 @@ Hypermerge.prototype._findMissingPeers = function (cb) {
       return cb()
     }
     self.findingMissingPeers = true
+    self._debugLog(`Connecting missing peer ${key.toString('hex')}`)
     self.connectPeer(key, () => {
+      self._debugLog(`Connected missing peer ${key.toString('hex')}`)
       connectMissingPeers(cb)
     })
   }

@@ -2,9 +2,13 @@ const html = require('choo/html')
 const devtools = require('choo-devtools')
 const choo = require('choo')
 const hypermergeMicro = require('./hypermerge-micro')
+const equal = require('deep-equal')
 const websocket = require('websocket-stream')
 const pump = require('pump')
+const prettyHash = require('pretty-hash')
 const storage = require('random-access-idb')('pp-mini')
+
+require('events').EventEmitter.prototype._maxListeners = 100
 
 function mainView (state, emit) {
   const {selectedColor, doc, pixelDoc} = state
@@ -61,11 +65,33 @@ function mainView (state, emit) {
     </form>
   `
   
+  const hm = pixelDoc.hm
+  const debugHtml = html`
+    <div>
+      <hr>
+      ${formatPeer(hm.source)}
+      ${hm.local ? formatPeer(hm.local) : ''}
+      ${Object.keys(hm.peers).map(key => formatPeer(hm.peers[key]))}
+    </div>
+  `
+  
+  function formatPeer(feed) {
+    return html`
+      <span>
+        ${feed.key.toString('hex')}
+        ${prettyHash(feed.discoveryKey)}
+        ${feed.length}
+        <br>
+      </span>
+    `
+  }
+  
   return html`
     <body>
       <div class="info">
-        Source: ${pixelDoc.hm.source.key.toString('hex')}<br>
-        Archiver: ${pixelDoc.hm.getArchiverKey().toString('hex')}<br>
+        Source: ${hm.source.key.toString('hex')}<br>
+        Archiver: ${hm.getArchiverKey().toString('hex')}<br>
+        ${debugHtml}
       </div>
       <div class="container">
         <div class="palette">
@@ -93,6 +119,7 @@ class PixelDoc {
     const hm = this.hm
     console.log('Jim ready', hm.key.toString('hex'))
     localStorage.setItem('key', hm.key.toString('hex'))
+    this.setupGlue()
     hm.doc.registerHandler(doc => {
       this.update(doc)
     })
@@ -138,6 +165,82 @@ class PixelDoc {
   
   addActor (key) {
     this.hm.connectPeer(key)
+  }
+  
+  setupGlue () {
+    const hm = this.hm
+    const self = this
+    hm.getMissing(() => {
+      // Setup 'glue' actors data structure in document
+      let actorIncludedInDoc = false
+      setTimeout(() => {
+        updateActorGlue(hm.get())
+        hm.doc.registerHandler(updateActorGlue)
+        this.update(hm.get())
+      }, 1000)
+
+      function updateActorGlue (doc) {
+      if (hm.findingMissingPeers) {
+        log('Still finding missing peers')
+        return // Still fetching dependencies
+      }
+      const actorId = hm.local ? hm.local.key.toString('hex')
+        : hm.source.key.toString('hex')
+      if (hm.local && !actorIncludedInDoc) {
+        actorIncludedInDoc = true
+        if (hm.local.length === 0) {
+          hm.change(doc => {
+            if (!doc.actors) {
+              doc.actors = {}
+              doc.actors[actorId] = {}
+            }
+            const seenActors = updateSeenActors(doc)
+            if (seenActors) {
+              doc.actors[actorId] = seenActors
+            }
+            // log(`Update local actors ${JSON.stringify(doc.actors)}`)
+          })
+          console.log(`Updated actors list (new actor)`)
+        }
+      } else {
+        const seenActors = updateSeenActors(doc)
+        if (seenActors) {
+          hm.change(doc => {
+            if (!doc.actors) {
+              doc.actors = {}
+            }
+            doc.actors[actorId] = seenActors
+          })
+          console.log(`Updated actors list`)
+        }
+      }
+
+      self.update(hm.get())
+
+      function updateSeenActors (doc) {
+        if (!actorId) return null
+        const actors = doc.actors || {}
+        let prevSeenActors = actors[actorId] || {}
+        if (prevSeenActors) {
+          prevSeenActors = Object.keys(prevSeenActors).reduce(
+            (acc, key) => {
+              if (key === '_objectId') return acc
+              return Object.assign({}, acc, {[key]: prevSeenActors[key]})
+            },
+            {}
+          )
+        }
+        const keys = Object.keys(actors)
+          .filter(key => (key !== actorId) && (key !== '_objectId'))
+        // log(keys.join(','))
+        const seenActors = keys.reduce(
+          (acc, key) => Object.assign({}, acc, {[key]: true}),
+          {}
+        )
+        return !equal(seenActors, prevSeenActors) ? seenActors : null
+      }
+    }
+    })
   }
 }
 

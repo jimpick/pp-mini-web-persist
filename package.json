@@ -23,7 +23,10 @@
     "transit-js": "^0.8.846",
     "uuid": "^3.2.1",
     "random-access-idb": "^1.0.4",
-    "automerge": "^0.7.1"
+    "automerge": "^0.7.1",
+    "hypercore-protocol": "^6.6.0",
+    "deep-equal": "^1.0.1",
+    "pretty-hash": "^1.0.1"
   },
   "engines": {
     "node": "9.x"
